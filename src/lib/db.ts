@@ -170,9 +170,10 @@ async function createBackend(connectionString: string | null): Promise<Db> {
 
   if (connectionString) {
     const { Pool } = await import("pg");
+    const prepared = prepareConnection(connectionString);
     const pool = new Pool({
-      connectionString,
-      ssl: sslConfig(connectionString),
+      connectionString: prepared.connectionString,
+      ssl: prepared.ssl,
       // Serverless functions are short-lived; a big pool just exhausts the server.
       max: 3,
       idleTimeoutMillis: 10_000,
@@ -218,6 +219,31 @@ async function createBackend(connectionString: string | null): Promise<Db> {
  * Traffic is still encrypted in every mode except `disable`. Set
  * sslmode=verify-full in the connection string to demand a publicly trusted chain.
  */
+/**
+ * node-postgres parses sslmode out of the connection string and lets it OVERRIDE
+ * an explicit `ssl` option — and it currently treats `require` as an alias for
+ * `verify-full`, contrary to libpq. So passing our own TLS settings alongside a
+ * connection string containing `?sslmode=require` silently does nothing.
+ *
+ * Strip sslmode from the string, and hand pg the settings we actually want.
+ * The mode is still read first, so its meaning is respected — just by us.
+ */
+export function prepareConnection(connectionString: string): {
+  connectionString: string;
+  ssl: false | { rejectUnauthorized: boolean } | undefined;
+} {
+  const ssl = sslConfig(connectionString);
+  try {
+    const url = new URL(connectionString);
+    url.searchParams.delete("sslmode");
+    url.searchParams.delete("uselibpqcompat");
+    return { connectionString: url.toString(), ssl };
+  } catch {
+    // Not a parseable URL — leave it alone rather than mangle it.
+    return { connectionString, ssl };
+  }
+}
+
 export function sslConfig(connectionString: string): false | { rejectUnauthorized: boolean } | undefined {
   const mode = readSslMode(connectionString);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sslConfig } from "./db.ts";
+import { prepareConnection, sslConfig } from "./db.ts";
 
 /**
  * These follow libpq's sslmode semantics. The one that matters in practice:
@@ -46,5 +46,40 @@ describe("ssl configuration", () => {
 
   it("does not throw on a malformed connection string", () => {
     expect(() => sslConfig("not a url")).not.toThrow();
+  });
+});
+
+/**
+ * node-postgres lets sslmode in the connection string override an explicit `ssl`
+ * option, and currently treats `require` as `verify-full`. These cover the strip
+ * that stops our settings being silently discarded.
+ */
+describe("connection preparation", () => {
+  it("removes sslmode so our own TLS settings survive", () => {
+    const prepared = prepareConnection(
+      "postgres://u:p@db.pooler.supabase.com:6543/postgres?sslmode=require",
+    );
+    expect(prepared.connectionString).not.toContain("sslmode");
+    expect(prepared.ssl).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("keeps the host, port, database and every other parameter", () => {
+    const prepared = prepareConnection(
+      "postgres://u:p@db.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true",
+    );
+    expect(prepared.connectionString).toContain("db.pooler.supabase.com:6543");
+    expect(prepared.connectionString).toContain("/postgres");
+    expect(prepared.connectionString).toContain("pgbouncer=true");
+  });
+
+  it("still verifies when verify-full was asked for", () => {
+    expect(prepareConnection("postgres://u:p@db.co/x?sslmode=verify-full").ssl).toEqual({
+      rejectUnauthorized: true,
+    });
+  });
+
+  it("leaves an unparseable string untouched rather than mangling it", () => {
+    const weird = "not a url";
+    expect(prepareConnection(weird).connectionString).toBe(weird);
   });
 });
