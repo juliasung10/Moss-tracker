@@ -82,9 +82,9 @@ export async function savePost(_prev: SaveResult, form: FormData): Promise<SaveR
 
   if (mode === "snapshot") {
     postId = Number(str(form, "postId"));
-    const existing = getPost(postId);
+    const existing = await getPost(postId);
     if (!existing) return { ok: false, error: "Pick a post to add a reading to." };
-    addSnapshot(postId, {
+    await addSnapshot(postId, {
       capturedAt: isoOrNow(form, "capturedAt"),
       ...metrics,
       followerCountAfter,
@@ -97,7 +97,7 @@ export async function savePost(_prev: SaveResult, form: FormData): Promise<SaveR
     if (!POST_FORMATS.includes(format)) return { ok: false, error: "Unknown post format." };
 
     const postedAt = isoOrNow(form, "postedAt");
-    postId = createPost(
+    postId = await createPost(
       { postedAt, label, url: nullable(form, "url"), format, notes: nullable(form, "notes") },
       {
         // A first reading is captured at posting time unless told otherwise.
@@ -108,12 +108,12 @@ export async function savePost(_prev: SaveResult, form: FormData): Promise<SaveR
     );
   }
 
-  const fresh = syncMilestones();
-  const posts = listPosts();
+  const fresh = await syncMilestones();
+  const posts = await listPosts();
   const saved = posts.find((p) => p.id === postId);
   if (!saved) return { ok: false, error: "Saved, but the post could not be read back." };
 
-  const { baselineWindow, startingBaseline } = getSettings();
+  const { baselineWindow, startingBaseline } = await getSettings();
   const comparison = comparePost(saved, posts, {
     window: baselineWindow,
     scope: "same",
@@ -131,14 +131,14 @@ export async function savePost(_prev: SaveResult, form: FormData): Promise<SaveR
 export async function updatePostDetails(form: FormData): Promise<void> {
   const id = Number(str(form, "id"));
   const format = str(form, "format") as PostFormat;
-  updatePost(id, {
+  await updatePost(id, {
     postedAt: isoOrNow(form, "postedAt"),
     label: str(form, "label"),
     url: nullable(form, "url"),
     format: POST_FORMATS.includes(format) ? format : "reel",
     notes: nullable(form, "notes"),
   });
-  syncMilestones();
+  await syncMilestones();
   revalidatePath("/");
   revalidatePath("/posts");
   revalidatePath(`/posts/${id}`);
@@ -146,7 +146,7 @@ export async function updatePostDetails(form: FormData): Promise<void> {
 
 export async function deletePostAction(form: FormData): Promise<void> {
   const id = Number(str(form, "id"));
-  deletePost(id);
+  await deletePost(id);
   revalidatePath("/");
   revalidatePath("/posts");
   revalidatePath("/milestones");
@@ -156,7 +156,7 @@ export async function deletePostAction(form: FormData): Promise<void> {
 export async function deleteSnapshotAction(form: FormData): Promise<void> {
   const id = Number(str(form, "id"));
   const postId = Number(str(form, "postId"));
-  deleteSnapshot(id);
+  await deleteSnapshot(id);
   revalidatePath("/");
   revalidatePath(`/posts/${postId}`);
 }
@@ -164,7 +164,7 @@ export async function deleteSnapshotAction(form: FormData): Promise<void> {
 export async function saveSettings(form: FormData): Promise<void> {
   const window = Number(str(form, "baselineWindow"));
   if (Number.isFinite(window) && window >= 2 && window <= 100) {
-    setSetting("baselineWindow", String(Math.round(window)));
+    await setSetting("baselineWindow", String(Math.round(window)));
   }
   revalidatePath("/", "layout");
 }
@@ -185,15 +185,15 @@ export async function saveStartingPoint(
     return { ok: false, error: "Enter the views a typical post gets — every rate is measured against it." };
   }
 
-  setSetting("startingBaseline", JSON.stringify(metrics));
-  setSetting("startingFollowers", String(num(form, "startingFollowers")));
+  await setSetting("startingBaseline", JSON.stringify(metrics));
+  await setSetting("startingFollowers", String(num(form, "startingFollowers")));
 
   const startedAt = str(form, "trackingStartedAt");
   const iso = startedAt ? isoOrNow(form, "trackingStartedAt") : new Date().toISOString();
-  setSetting("trackingStartedAt", iso);
+  await setSetting("trackingStartedAt", iso);
 
   // Thresholds already passed at the starting point must not fire retroactively.
-  syncMilestones();
+  await syncMilestones();
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -226,7 +226,7 @@ export async function importCsv(_prev: ImportResult, form: FormData): Promise<Im
     return { ok: false, error: parsed.errors[0] ?? "No usable rows found in that file." };
   }
 
-  const existing = listPosts();
+  const existing = await listPosts();
   const keyOf = (label: string, postedAt: string) =>
     `${label.toLowerCase()}::${new Date(postedAt).toISOString().slice(0, 10)}`;
   const byKey = new Map(existing.map((p) => [keyOf(p.label, p.postedAt), p.id]));
@@ -243,7 +243,7 @@ export async function importCsv(_prev: ImportResult, form: FormData): Promise<Im
     if (postId === undefined) {
       // A post is never created without a reading, so the earliest one goes with it.
       const [first, ...later] = pending;
-      postId = createPost(
+      postId = await createPost(
         {
           postedAt: group.postedAt,
           label: group.label,
@@ -259,19 +259,19 @@ export async function importCsv(_prev: ImportResult, form: FormData): Promise<Im
       pending = later;
     }
 
-    const seen = new Set(listSnapshots(postId).map((s) => s.capturedAt));
+    const seen = new Set((await listSnapshots(postId)).map((s) => s.capturedAt));
     for (const snap of pending) {
       if (seen.has(snap.capturedAt)) {
         skipped += 1;
         continue;
       }
-      addSnapshot(postId, snap);
+      await addSnapshot(postId, snap);
       seen.add(snap.capturedAt);
       snapshotsCreated += 1;
     }
   }
 
-  syncMilestones();
+  await syncMilestones();
   revalidatePath("/", "layout");
 
   return { ok: true, postsCreated, snapshotsCreated, skipped, warnings: parsed.errors.slice(0, 5) };

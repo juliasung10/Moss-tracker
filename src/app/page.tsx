@@ -35,8 +35,8 @@ export default async function DashboardPage({
   const { scope: rawScope } = await searchParams;
   const scope = parseScope(rawScope);
 
-  const posts = listPosts();
-  const { baselineWindow, startingBaseline, trackingStartedAt } = getSettings();
+  const posts = await listPosts();
+  const { baselineWindow, startingBaseline, trackingStartedAt } = await getSettings();
 
   if (posts.length === 0) return <EmptyDashboard hasStartingPoint={startingBaseline !== null} />;
 
@@ -64,8 +64,8 @@ export default async function DashboardPage({
     format,
     seed: startingBaseline,
   });
-  const followers = followerSeries();
-  const milestones = listMilestones();
+  const followers = await followerSeries();
+  const milestones = await listMilestones();
   const fresh = freshMilestones(milestones);
   const next = nextMilestone(latestFollowerCount(posts), cumulativeViews(posts));
 

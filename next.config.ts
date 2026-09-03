@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // better-sqlite3 is a native module; it must not be bundled by webpack/turbopack.
-  serverExternalPackages: ["better-sqlite3"],
+  // The libSQL client pulls in optional native bindings for local file databases;
+  // keep it out of the bundle so the server resolves it at runtime instead.
+  serverExternalPackages: ["@libsql/client"],
 };
 
 export default nextConfig;

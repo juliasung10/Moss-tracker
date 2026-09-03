@@ -4,8 +4,8 @@ import { listPosts } from "@/lib/queries.ts";
 
 export const dynamic = "force-dynamic";
 
-export default function AddPage() {
-  const posts = listPosts();
+export default async function AddPage() {
+  const posts = await listPosts();
 
   const formPosts: FormPost[] = posts.map((p) => ({
     id: p.id,

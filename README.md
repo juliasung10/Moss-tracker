@@ -39,6 +39,45 @@ for you. From then on, log each Reel as you post it.
 | `npm run build` | Production build |
 | `npm run clean` | Delete `.next`. Do this if a page 500s with `Unexpected end of JSON input` after switching between `build` and `dev` |
 
+## Deploying to Vercel + Turso
+
+The database is libSQL. With no `TURSO_DATABASE_URL` set it opens a plain file at
+`data/moss.db`, so local development needs no account and no credentials. Point that
+variable at Turso and the identical code runs on Vercel.
+
+This matters because Vercel's filesystem is ephemeral — anything written to disk is
+discarded between requests. A file-backed database would appear to work and then
+silently lose every post. Turso is SQLite over the network, so the data outlives the
+request.
+
+**1. Create the database** (once, on your machine):
+
+```bash
+brew install tursodatabase/tap/turso
+turso auth signup
+turso db create moss-tracker
+turso db show moss-tracker --url        # libsql://...
+turso db tokens create moss-tracker     # the auth token
+```
+
+**2. Deploy**, setting both values as Environment Variables in the Vercel project
+(Settings → Environment Variables), for Production and Preview:
+
+| Variable | Value |
+|---|---|
+| `TURSO_DATABASE_URL` | the `libsql://…` URL |
+| `TURSO_AUTH_TOKEN` | the token |
+
+Migrations run automatically on first request, so the schema creates itself.
+
+**3. Move your existing data across**, if you have any: export the CSV from Settings
+before deploying, then import it on the deployed app from the same screen.
+
+> **The deployed app has no login.** Anyone with the URL can read your figures and add
+> posts. That is a deliberate choice — it is a single-user tool and a password was not
+> wanted. If that changes, a Basic-auth middleware gated on one environment variable is
+> about twenty lines.
+
 ## The starting point
 
 A trailing average has a cold-start problem: your first ten posts have nothing to be
@@ -172,6 +211,9 @@ permanently at `/milestones`.
 
 `data/moss.db`, one SQLite file, three tables plus settings.
 
+All data lives in one libSQL database: a local file in development, Turso in
+production.
+
 **Post** — identity only: `postedAt`, `label`, `url`, `format`, `notes`.
 
 **Settings** — key/value: the baseline window N, and your starting point
@@ -216,15 +258,15 @@ read are reported rather than silently dropped.
 
 ## Backing up
 
-Everything is in `data/moss.db`. Stop the app and copy it:
+**Locally**, everything is in `data/moss.db` — stop the app and copy it:
 
 ```bash
 cp data/moss.db ~/backups/moss-$(date +%F).db
 ```
 
-The app runs SQLite in WAL mode, so if you copy while it's running, take the
-`-wal` and `-shm` files too — or just use the CSV export, which is portable and
-human-readable.
+**On Turso**, use `turso db shell moss-tracker .dump > backup.sql`, or just take the
+CSV export from Settings. The CSV is the whole database in a portable, readable form
+and can be imported straight back.
 
 ## No Instagram API — and where it would go
 
@@ -245,8 +287,8 @@ history current on its own.
 src/lib/metrics.ts       Metrics, baselines, deltas, ranks, drift — pure, no I/O
 src/lib/milestones.ts    Milestone detection and progress — pure, no I/O
 src/lib/csv.ts           CSV reading and writing — pure, no I/O
-src/lib/db.ts            SQLite connection and numbered migrations
-src/lib/queries.ts       All SQL lives here
+src/lib/db.ts            libSQL connection and numbered migrations
+src/lib/queries.ts       All SQL lives here (async — libSQL has no sync API)
 src/lib/actions.ts       Server actions (save, edit, delete, import, settings)
 src/components/          UI, shadcn-style; charts under components/charts
 scripts/seed.ts          12 sample Reels

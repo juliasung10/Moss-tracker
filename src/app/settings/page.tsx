@@ -5,15 +5,16 @@ import { Label } from "@/components/ui/label.tsx";
 import { CsvImport } from "@/components/csv-import.tsx";
 import { StartingPointForm } from "@/components/starting-point-form.tsx";
 import { saveSettings } from "@/lib/actions.ts";
-import { DB_PATH } from "@/lib/db.ts";
+import { DB_URL, IS_REMOTE } from "@/lib/db.ts";
 import { CSV_COLUMNS } from "@/lib/csv.ts";
 import { getSettings, listPosts } from "@/lib/queries.ts";
 
 export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
-  const { baselineWindow, startingBaseline, startingFollowers, trackingStartedAt } = getSettings();
-  const posts = listPosts();
+export default async function SettingsPage() {
+  const { baselineWindow, startingBaseline, startingFollowers, trackingStartedAt } =
+    await getSettings();
+  const posts = await listPosts();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -131,15 +132,25 @@ export default function SettingsPage() {
         </CardHeader>
         <CardBody className="space-y-2 text-[13px] text-ink-muted">
           <p>
-            File: <span className="num break-all text-ink">{DB_PATH}</span>
+            {IS_REMOTE ? "Hosted on Turso" : "Local file"}:{" "}
+            <span className="num break-all text-ink">{DB_URL.replace(/\?authToken=.*$/, "")}</span>
           </p>
+          {IS_REMOTE ? (
+            <p>
+              Turso keeps its own backups. Take your own copy any time with the CSV export above —
+              it is the whole database in a readable form.
+            </p>
+          ) : (
+            <p>
+              Back it up by copying that file while the app is stopped, or use the CSV export above.
+            </p>
+          )}
           <p>
-            Back it up by copying that file while the app is stopped. Wipe every post, reading and
-            milestone with{" "}
+            Wipe every post, reading and milestone with{" "}
             <code className="num rounded border border-line bg-canvas px-1 py-0.5">
               npm run db:reset
             </code>
-            , or reload the 12 samples with{" "}
+            , or load 12 invented demo Reels with{" "}
             <code className="num rounded border border-line bg-canvas px-1 py-0.5">
               npm run db:seed
             </code>

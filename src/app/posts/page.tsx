@@ -16,8 +16,8 @@ export default async function PostsPage({
   const { scope: rawScope } = await searchParams;
   const scope = parseScope(rawScope);
 
-  const posts = listPosts();
-  const { baselineWindow, startingBaseline } = getSettings();
+  const posts = await listPosts();
+  const { baselineWindow, startingBaseline } = await getSettings();
   const format = dominantFormat(posts);
 
   // Each row is compared against the baseline as it stood when that post went up,

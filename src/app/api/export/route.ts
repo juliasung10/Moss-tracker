@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
  * Every post and every snapshot as CSV — the full contents of the database in a
  * form you can open in a spreadsheet and read straight back in.
  */
-export function GET() {
-  const csv = serializePostsCsv(listPostsForExport());
+export async function GET() {
+  const csv = serializePostsCsv(await listPostsForExport());
   const stamp = new Date().toISOString().slice(0, 10);
 
   return new Response(csv, {

@@ -1,29 +1,35 @@
 /**
- * SQLite connection and migrations.
+ * libSQL connection and migrations.
  *
- * One file, data/moss.db, holds everything. Migrations are numbered and applied
- * once, tracked in `_migrations`, so an existing database upgrades in place rather
- * than needing a wipe.
+ * One code path serves both environments. With no TURSO_DATABASE_URL set, this
+ * opens a local file at data/moss.db exactly as before, so `npm run dev` needs no
+ * credentials and no cloud account. In production it points at Turso instead.
+ *
+ * libSQL is asynchronous, unlike better-sqlite3 — every read and write here returns
+ * a promise. That is the one real cost of being deployable.
  */
 
-import Database from "better-sqlite3";
-import fs from "node:fs";
+import { createClient, type Client, type InArgs } from "@libsql/client";
 import path from "node:path";
 
-export const DB_PATH = process.env.MOSS_DB_PATH ?? path.join(process.cwd(), "data", "moss.db");
+/** Local file by default; Turso when the environment provides a URL. */
+export const DB_URL =
+  process.env.TURSO_DATABASE_URL ?? `file:${path.join(process.cwd(), "data", "moss.db")}`;
+
+export const IS_REMOTE = !DB_URL.startsWith("file:");
 
 interface Migration {
   id: number;
   name: string;
-  sql: string;
+  statements: string[];
 }
 
 const MIGRATIONS: Migration[] = [
   {
     id: 1,
     name: "initial schema",
-    sql: `
-      CREATE TABLE posts (
+    statements: [
+      `CREATE TABLE posts (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         postedAt    TEXT    NOT NULL,
         label       TEXT    NOT NULL,
@@ -31,12 +37,11 @@ const MIGRATIONS: Migration[] = [
         format      TEXT    NOT NULL CHECK (format IN ('reel', 'carousel', 'image')),
         notes       TEXT,
         createdAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      );
-      CREATE INDEX idx_posts_postedAt ON posts (postedAt);
-
-      -- Every number lives here. A post always has at least one snapshot; its
-      -- "current" figures are the row with the newest capturedAt.
-      CREATE TABLE snapshots (
+      )`,
+      `CREATE INDEX idx_posts_postedAt ON posts (postedAt)`,
+      // Every number lives here. A post always has at least one snapshot; its
+      // "current" figures are the row with the newest capturedAt.
+      `CREATE TABLE snapshots (
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         postId              INTEGER NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
         capturedAt          TEXT    NOT NULL,
@@ -50,11 +55,10 @@ const MIGRATIONS: Migration[] = [
         followsFromPost     INTEGER NOT NULL DEFAULT 0,
         followerCountAfter  INTEGER NOT NULL DEFAULT 0,
         createdAt           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      );
-      CREATE INDEX idx_snapshots_post ON snapshots (postId, capturedAt DESC);
-
-      -- "key" is UNIQUE: this is what makes milestone detection idempotent.
-      CREATE TABLE milestones (
+      )`,
+      `CREATE INDEX idx_snapshots_post ON snapshots (postId, capturedAt DESC)`,
+      // "key" is UNIQUE: this is what makes milestone detection idempotent.
+      `CREATE TABLE milestones (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         "key"       TEXT    NOT NULL UNIQUE,
         type        TEXT    NOT NULL,
@@ -64,75 +68,107 @@ const MIGRATIONS: Migration[] = [
         metric      TEXT,
         value       REAL    NOT NULL,
         createdAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      );
-      CREATE INDEX idx_milestones_achievedAt ON milestones (achievedAt DESC);
-
-      CREATE TABLE settings (
+      )`,
+      `CREATE INDEX idx_milestones_achievedAt ON milestones (achievedAt DESC)`,
+      `CREATE TABLE settings (
         "key"  TEXT PRIMARY KEY,
         value  TEXT NOT NULL
-      );
-    `,
+      )`,
+    ],
   },
 ];
 
-let cached: Database.Database | null = null;
-
-/**
- * The shared connection. Cached on globalThis so Next's dev-mode module reloading
- * doesn't open a new handle on every edit.
- */
-export function getDb(): Database.Database {
-  const g = globalThis as typeof globalThis & { __mossDb?: Database.Database };
-  if (g.__mossDb) return g.__mossDb;
-  if (cached) return cached;
-
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  migrate(db);
-
-  cached = db;
-  g.__mossDb = db;
-  return db;
+function makeClient(url = DB_URL): Client {
+  return createClient({
+    url,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
 }
 
-export function migrate(db: Database.Database): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+/**
+ * The shared client, plus a one-time migration promise.
+ *
+ * Both are cached on globalThis so Next's dev-mode module reloading does not open a
+ * new connection or re-run migrations on every edit. Callers await `getDb()`, which
+ * resolves only once the schema is in place.
+ */
+interface Cache {
+  client?: Client;
+  migrated?: Promise<Client>;
+}
+
+function cache(): Cache {
+  const g = globalThis as typeof globalThis & { __moss?: Cache };
+  g.__moss ??= {};
+  return g.__moss;
+}
+
+export function getClient(): Client {
+  const c = cache();
+  c.client ??= makeClient();
+  return c.client;
+}
+
+/** The client, guaranteed migrated. Await this before any query. */
+export function getDb(): Promise<Client> {
+  const c = cache();
+  c.migrated ??= (async () => {
+    const client = getClient();
+    await migrate(client);
+    return client;
+  })();
+  return c.migrated;
+}
+
+export async function migrate(db: Client): Promise<void> {
+  await db.execute(`CREATE TABLE IF NOT EXISTS _migrations (
     id        INTEGER PRIMARY KEY,
     name      TEXT NOT NULL,
     appliedAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`);
 
-  const applied = new Set(
-    db.prepare("SELECT id FROM _migrations").all().map((r) => (r as { id: number }).id),
-  );
+  const existing = await db.execute("SELECT id FROM _migrations");
+  const applied = new Set(existing.rows.map((r) => Number(r.id)));
 
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.id)) continue;
-    db.transaction(() => {
-      db.exec(migration.sql);
-      db.prepare("INSERT INTO _migrations (id, name) VALUES (?, ?)").run(migration.id, migration.name);
-    })();
+    // batch() is transactional: either the whole migration lands or none of it does.
+    await db.batch(
+      [
+        ...migration.statements,
+        {
+          sql: "INSERT INTO _migrations (id, name) VALUES (?, ?)",
+          args: [migration.id, migration.name],
+        },
+      ],
+      "write",
+    );
   }
 }
 
-/** Open a connection at an explicit path — used by the seed and reset scripts. */
-export function openDb(dbPath: string): Database.Database {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  migrate(db);
+/** Open a connection at an explicit URL — used by the seed and reset scripts. */
+export async function openDb(url: string = DB_URL): Promise<Client> {
+  const db = makeClient(url);
+  await migrate(db);
   return db;
 }
 
 /** Delete every row, leaving the schema in place. */
-export function wipe(db: Database.Database): void {
-  db.transaction(() => {
-    db.exec("DELETE FROM milestones");
-    db.exec("DELETE FROM snapshots");
-    db.exec("DELETE FROM posts");
-    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('posts','snapshots','milestones')");
-  })();
+export async function wipe(db: Client): Promise<void> {
+  await db.batch(
+    [
+      "DELETE FROM milestones",
+      "DELETE FROM snapshots",
+      "DELETE FROM posts",
+      "DELETE FROM sqlite_sequence WHERE name IN ('posts','snapshots','milestones')",
+    ],
+    "write",
+  );
 }
+
+/** libSQL returns INTEGER columns as number or bigint depending on size. */
+export function int(value: unknown): number {
+  return typeof value === "bigint" ? Number(value) : Number(value ?? 0);
+}
+
+export type { Client, InArgs };

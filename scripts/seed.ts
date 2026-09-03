@@ -12,7 +12,7 @@
  * the "fresh milestone" banner has something in the last 14 days.
  */
 
-import { openDb, wipe, DB_PATH } from "../src/lib/db.ts";
+import { openDb, wipe, DB_URL } from "../src/lib/db.ts";
 import { createPost, addSnapshot, setSetting, syncMilestones } from "../src/lib/queries.ts";
 import type { RawMetrics } from "../src/lib/types.ts";
 
@@ -146,13 +146,13 @@ function atMaturity(final: RawMetrics, f: number): RawMetrics {
   };
 }
 
-function main() {
-  const db = openDb(DB_PATH);
-  wipe(db);
-  setSetting("baselineWindow", "10", db);
+async function main() {
+  const db = await openDb();
+  await wipe(db);
+  await setSetting("baselineWindow", "10", db);
 
   // A declared starting point, so the demo also shows the progress view working.
-  setSetting(
+  await setSetting(
     "startingBaseline",
     JSON.stringify({
       views: 1500,
@@ -166,7 +166,7 @@ function main() {
     }),
     db,
   );
-  setSetting("startingFollowers", "620", db);
+  await setSetting("startingFollowers", "620", db);
 
   const now = Date.now();
   let previousFollowers = 620;
@@ -181,7 +181,7 @@ function main() {
     // The newest reading is the final figure; earlier ones are scaled back.
     const maturityAt = (i: number) => MATURITY[Math.min(MATURITY.length - 1, ages.length - 1 - i)];
 
-    const postId = createPost(
+    const postId = await createPost(
       {
         postedAt: postedAt.toISOString(),
         label: sample.label,
@@ -194,20 +194,22 @@ function main() {
     );
 
     for (let i = 1; i < ages.length; i++) {
-      addSnapshot(postId, buildSnapshot(sample, postedAt, ages[i], maturityAt(i), previousFollowers), db);
+      await addSnapshot(postId, buildSnapshot(sample, postedAt, ages[i], maturityAt(i), previousFollowers), db);
     }
 
     previousFollowers = sample.followers;
   }
 
-  const fresh = syncMilestones(db);
-  const posts = db.prepare("SELECT COUNT(*) AS n FROM posts").get() as { n: number };
-  const snaps = db.prepare("SELECT COUNT(*) AS n FROM snapshots").get() as { n: number };
-  const stones = db.prepare("SELECT COUNT(*) AS n FROM milestones").get() as { n: number };
+  const fresh = await syncMilestones(db);
+  const count = async (table: string) =>
+    Number((await db.execute(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
+  const posts = { n: await count("posts") };
+  const snaps = { n: await count("snapshots") };
+  const stones = { n: await count("milestones") };
 
   console.log("DEMO DATA — these Reels are invented, not real @moss_robotics posts.");
   console.log("Run `npm run db:reset` to clear them before tracking for real.\n");
-  console.log(`Seeded ${posts.n} posts, ${snaps.n} snapshots, ${stones.n} milestones into ${DB_PATH}`);
+  console.log(`Seeded ${posts.n} posts, ${snaps.n} snapshots, ${stones.n} milestones into ${DB_URL}`);
   for (const m of fresh) console.log(`  · ${m.label}`);
   db.close();
 }
@@ -228,4 +230,4 @@ function buildSnapshot(
   };
 }
 
-main();
+await main();

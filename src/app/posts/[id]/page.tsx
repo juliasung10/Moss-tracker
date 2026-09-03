@@ -39,12 +39,12 @@ export default async function PostDetailPage({
   const scope = parseScope(rawScope);
 
   const postId = Number(id);
-  const post = getPost(postId);
+  const post = await getPost(postId);
   if (!post) notFound();
 
-  const posts = listPosts();
-  const snapshots = listSnapshots(postId);
-  const { baselineWindow, startingBaseline } = getSettings();
+  const posts = await listPosts();
+  const snapshots = await listSnapshots(postId);
+  const { baselineWindow, startingBaseline } = await getSettings();
   const comparison = comparePost(post, posts, {
     window: baselineWindow,
     scope,

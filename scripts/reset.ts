@@ -7,10 +7,10 @@
  * afterwards if you want the samples back.
  */
 
-import { openDb, wipe, DB_PATH } from "../src/lib/db.ts";
+import { openDb, wipe, DB_URL } from "../src/lib/db.ts";
 
-const db = openDb(DB_PATH);
-wipe(db);
+const db = await openDb();
+await wipe(db);
 db.close();
-console.log(`Wiped all posts, snapshots and milestones from ${DB_PATH}`);
+console.log(`Wiped all posts, snapshots and milestones from ${DB_URL}`);
 console.log("Your baseline window and starting point are kept. Set or edit them in Settings.");

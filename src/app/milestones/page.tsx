@@ -30,9 +30,9 @@ function byMonth(milestones: Milestone[]): { month: string; items: Milestone[] }
   return groups;
 }
 
-export default function MilestonesPage() {
-  const milestones = listMilestones();
-  const posts = listPosts();
+export default async function MilestonesPage() {
+  const milestones = await listMilestones();
+  const posts = await listPosts();
   const labelById = new Map(posts.map((p) => [p.id, p.label]));
   const groups = byMonth(milestones);
 
