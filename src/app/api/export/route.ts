@@ -1,4 +1,5 @@
 import { serializePostsCsv } from "@/lib/csv.ts";
+import { databaseProblem } from "@/lib/db.ts";
 import { listPostsForExport } from "@/lib/queries.ts";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,9 @@ export const dynamic = "force-dynamic";
  * form you can open in a spreadsheet and read straight back in.
  */
 export async function GET() {
+  const problem = databaseProblem();
+  if (problem) return new Response(problem, { status: 503 });
+
   const csv = serializePostsCsv(await listPostsForExport());
   const stamp = new Date().toISOString().slice(0, 10);
 

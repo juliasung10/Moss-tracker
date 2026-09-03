@@ -23,6 +23,26 @@ export const CONNECTION_STRING =
 
 export const IS_REMOTE = CONNECTION_STRING !== null;
 
+/**
+ * Vercel (and any serverless host) has a read-only, ephemeral filesystem. PGlite
+ * writes files, so falling back to it there would either crash or — worse — appear
+ * to work and lose every post between requests.
+ */
+export const IS_SERVERLESS = process.env.VERCEL === "1" || process.env.AWS_LAMBDA_FUNCTION_NAME !== undefined;
+
+/**
+ * Why the database cannot be opened, or null if it can. Pages check this and render
+ * setup instructions rather than throwing a server-side exception the host reduces
+ * to a digest number.
+ */
+export function databaseProblem(): string | null {
+  if (CONNECTION_STRING) return null;
+  if (IS_SERVERLESS) {
+    return "No DATABASE_URL is set. This deployment has no database attached, and the local file-backed fallback cannot run on a serverless host.";
+  }
+  return null;
+}
+
 /** Where PGlite keeps its files when running locally. */
 export const LOCAL_DATA_DIR = path.join(process.cwd(), "data", "pg");
 
@@ -107,6 +127,9 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
 ];
 
 async function createBackend(connectionString: string | null): Promise<Db> {
+  const problem = databaseProblem();
+  if (problem) throw new Error(problem);
+
   if (connectionString) {
     const { Pool } = await import("pg");
     const isLocalHost = /@(localhost|127\.0\.0\.1)/.test(connectionString);

@@ -1,3 +1,5 @@
+import { databaseProblem } from "@/lib/db.ts";
+import { SetupRequired } from "@/components/setup-required.tsx";
 import Link from "next/link";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Segmented } from "@/components/ui/segmented.tsx";
@@ -32,6 +34,10 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ scope?: string }>;
 }) {
+  // A deployment with no database attached must explain itself, not crash.
+  const problem = databaseProblem();
+  if (problem) return <SetupRequired problem={problem} />;
+
   const { scope: rawScope } = await searchParams;
   const scope = parseScope(rawScope);
 

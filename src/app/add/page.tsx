@@ -1,3 +1,5 @@
+import { databaseProblem } from "@/lib/db.ts";
+import { SetupRequired } from "@/components/setup-required.tsx";
 import { PostForm, type FormPost } from "@/components/post-form.tsx";
 import { latestFollowerCount } from "@/lib/metrics.ts";
 import { listPosts } from "@/lib/queries.ts";
@@ -5,6 +7,10 @@ import { listPosts } from "@/lib/queries.ts";
 export const dynamic = "force-dynamic";
 
 export default async function AddPage() {
+  // A deployment with no database attached must explain itself, not crash.
+  const problem = databaseProblem();
+  if (problem) return <SetupRequired problem={problem} />;
+
   const posts = await listPosts();
 
   const formPosts: FormPost[] = posts.map((p) => ({

@@ -1,3 +1,4 @@
+import { SetupRequired } from "@/components/setup-required.tsx";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -5,13 +6,17 @@ import { Label } from "@/components/ui/label.tsx";
 import { CsvImport } from "@/components/csv-import.tsx";
 import { StartingPointForm } from "@/components/starting-point-form.tsx";
 import { saveSettings } from "@/lib/actions.ts";
-import { IS_REMOTE, describeDatabase } from "@/lib/db.ts";
+import { IS_REMOTE, describeDatabase, databaseProblem } from "@/lib/db.ts";
 import { CSV_COLUMNS } from "@/lib/csv.ts";
 import { getSettings, listPosts } from "@/lib/queries.ts";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
+  // A deployment with no database attached must explain itself, not crash.
+  const problem = databaseProblem();
+  if (problem) return <SetupRequired problem={problem} />;
+
   const { baselineWindow, startingBaseline, startingFollowers, trackingStartedAt } =
     await getSettings();
   const posts = await listPosts();
