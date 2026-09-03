@@ -37,7 +37,7 @@ for you. From then on, log each Reel as you post it.
 | `npm run db:seed` | Wipe, then load 12 sample Reels with realistic snapshot history |
 | `npm run db:reset` | Wipe every post, reading and milestone. Schema and settings survive |
 | `npm run build` | Production build |
-| `npm run clean` | Delete `.next`. Do this if a page 500s with `Unexpected end of JSON input` after switching between `build` and `dev` |
+| `npm run clean` | Delete `.next`. The dev server sometimes 500s with `Unexpected end of JSON input` on the very first request after a cold start — refresh and it is fine. Production builds are unaffected. |
 
 ## Deploying to Vercel
 
