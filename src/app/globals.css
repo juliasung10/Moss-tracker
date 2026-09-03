@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/*
+ * One accent colour (a technical blue) for anything interactive.
+ * Green and red are reserved exclusively for deltas — nothing else in the app
+ * is allowed to use them, so a flash of colour always means "vs baseline".
+ */
+@theme {
+  --color-canvas: #fbfbfa;
+  --color-surface: #ffffff;
+  --color-line: #e8e7e3;
+  --color-line-strong: #d6d4ce;
+  --color-ink: #191917;
+  --color-ink-muted: #6c6b65;
+  --color-ink-faint: #9c9b94;
+  --color-accent: #2e50c8;
+  --color-accent-soft: #eef1fb;
+  --color-up: #15803d;
+  --color-up-soft: #eef7f1;
+  --color-down: #b42318;
+  --color-down-soft: #fdf1f0;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Every figure in the app. Tabular so columns of numbers line up exactly. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.015em;
+}
+
+/* Section eyebrow: small, spaced, quiet. */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+/* Recharts draws a focus outline on the surface; we never want it. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
