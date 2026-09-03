@@ -1,5 +1,4 @@
-import { databaseProblem } from "@/lib/db.ts";
-import { SetupRequired } from "@/components/setup-required.tsx";
+import { requireDatabase } from "@/lib/guard.tsx";
 import Link from "next/link";
 import { Button } from "@/components/ui/button.tsx";
 import { Segmented } from "@/components/ui/segmented.tsx";
@@ -15,9 +14,9 @@ export default async function PostsPage({
 }: {
   searchParams: Promise<{ scope?: string }>;
 }) {
-  // A deployment with no database attached must explain itself, not crash.
-  const problem = databaseProblem();
-  if (problem) return <SetupRequired problem={problem} />;
+  // A database that is missing or unreachable must explain itself, not crash.
+  const blocked = await requireDatabase();
+  if (blocked) return blocked;
 
   const { scope: rawScope } = await searchParams;
   const scope = parseScope(rawScope);

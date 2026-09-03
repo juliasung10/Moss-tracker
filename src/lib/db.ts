@@ -17,9 +17,47 @@
 
 import path from "node:path";
 
-/** Vercel's Postgres integrations expose one of these. */
-export const CONNECTION_STRING =
-  process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? null;
+/**
+ * Postgres integrations each pick their own variable name: Neon and Vercel use
+ * DATABASE_URL, Supabase uses POSTGRES_URL, Prisma-flavoured setups use
+ * POSTGRES_PRISMA_URL. Accept any of them rather than making the user rename one.
+ *
+ * Pooled URLs come first: serverless functions open and drop connections
+ * constantly, which a direct connection limit will not survive.
+ */
+export const CONNECTION_STRING_VARS = [
+  "DATABASE_URL",
+  "POSTGRES_URL",
+  "POSTGRES_PRISMA_URL",
+  "SUPABASE_DB_URL",
+  "POSTGRES_URL_NON_POOLING",
+  "DATABASE_URL_UNPOOLED",
+] as const;
+
+function findConnectionString(): { name: string; value: string } | null {
+  for (const name of CONNECTION_STRING_VARS) {
+    const value = process.env[name];
+    if (value && value.trim() !== "") return { name, value };
+  }
+  return null;
+}
+
+const FOUND = findConnectionString();
+
+export const CONNECTION_STRING = FOUND?.value ?? null;
+/** Which variable supplied it — shown on the Settings screen, never the value. */
+export const CONNECTION_SOURCE = FOUND?.name ?? null;
+
+/**
+ * Names only, never values, of the database-ish variables this deployment can see.
+ * Shown when no connection string is found so a misnamed variable is visible
+ * instead of guessed at.
+ */
+export function visibleDatabaseVars(): string[] {
+  return Object.keys(process.env)
+    .filter((k) => /^(DATABASE|POSTGRES|PG|SUPABASE)/.test(k))
+    .sort();
+}
 
 export const IS_REMOTE = CONNECTION_STRING !== null;
 
@@ -38,7 +76,7 @@ export const IS_SERVERLESS = process.env.VERCEL === "1" || process.env.AWS_LAMBD
 export function databaseProblem(): string | null {
   if (CONNECTION_STRING) return null;
   if (IS_SERVERLESS) {
-    return "No DATABASE_URL is set. This deployment has no database attached, and the local file-backed fallback cannot run on a serverless host.";
+    return "No database connection string is set. This deployment has no database attached, and the local file-backed fallback cannot run on a serverless host.";
   }
   return null;
 }

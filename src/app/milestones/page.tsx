@@ -1,5 +1,4 @@
-import { databaseProblem } from "@/lib/db.ts";
-import { SetupRequired } from "@/components/setup-required.tsx";
+import { requireDatabase } from "@/lib/guard.tsx";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge.tsx";
 import { formatDateFull } from "@/lib/format.ts";
@@ -33,9 +32,9 @@ function byMonth(milestones: Milestone[]): { month: string; items: Milestone[] }
 }
 
 export default async function MilestonesPage() {
-  // A deployment with no database attached must explain itself, not crash.
-  const problem = databaseProblem();
-  if (problem) return <SetupRequired problem={problem} />;
+  // A database that is missing or unreachable must explain itself, not crash.
+  const blocked = await requireDatabase();
+  if (blocked) return blocked;
 
   const milestones = await listMilestones();
   const posts = await listPosts();
