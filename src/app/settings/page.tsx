@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label.tsx";
 import { CsvImport } from "@/components/csv-import.tsx";
 import { StartingPointForm } from "@/components/starting-point-form.tsx";
 import { saveSettings } from "@/lib/actions.ts";
-import { DB_URL, IS_REMOTE } from "@/lib/db.ts";
+import { IS_REMOTE, describeDatabase } from "@/lib/db.ts";
 import { CSV_COLUMNS } from "@/lib/csv.ts";
 import { getSettings, listPosts } from "@/lib/queries.ts";
 
@@ -132,17 +132,18 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardBody className="space-y-2 text-[13px] text-ink-muted">
           <p>
-            {IS_REMOTE ? "Hosted on Turso" : "Local file"}:{" "}
-            <span className="num break-all text-ink">{DB_URL.replace(/\?authToken=.*$/, "")}</span>
+            {IS_REMOTE ? "Hosted Postgres" : "Local database"}:{" "}
+            <span className="num break-all text-ink">{describeDatabase()}</span>
           </p>
           {IS_REMOTE ? (
             <p>
-              Turso keeps its own backups. Take your own copy any time with the CSV export above —
-              it is the whole database in a readable form.
+              Your Postgres provider keeps its own backups. Take your own copy any time with the
+              CSV export above — it is the whole database in a readable form.
             </p>
           ) : (
             <p>
-              Back it up by copying that file while the app is stopped, or use the CSV export above.
+              Back it up by copying that folder while the app is stopped, or use the CSV export
+              above.
             </p>
           )}
           <p>

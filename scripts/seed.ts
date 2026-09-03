@@ -12,7 +12,7 @@
  * the "fresh milestone" banner has something in the last 14 days.
  */
 
-import { openDb, wipe, DB_URL } from "../src/lib/db.ts";
+import { openDb, wipe, describeDatabase } from "../src/lib/db.ts";
 import { createPost, addSnapshot, setSetting, syncMilestones } from "../src/lib/queries.ts";
 import type { RawMetrics } from "../src/lib/types.ts";
 
@@ -202,16 +202,17 @@ async function main() {
 
   const fresh = await syncMilestones(db);
   const count = async (table: string) =>
-    Number((await db.execute(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
+    Number((await db.query<{ n: string }>(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
   const posts = { n: await count("posts") };
   const snaps = { n: await count("snapshots") };
   const stones = { n: await count("milestones") };
 
   console.log("DEMO DATA — these Reels are invented, not real @moss_robotics posts.");
   console.log("Run `npm run db:reset` to clear them before tracking for real.\n");
-  console.log(`Seeded ${posts.n} posts, ${snaps.n} snapshots, ${stones.n} milestones into ${DB_URL}`);
+  console.log(`Seeded ${posts.n} posts, ${snaps.n} snapshots, ${stones.n} milestones into ${describeDatabase()}`);
   for (const m of fresh) console.log(`  · ${m.label}`);
-  db.close();
+
+  await db.close();
 }
 
 function buildSnapshot(

@@ -1,100 +1,157 @@
 /**
- * libSQL connection and migrations.
+ * Postgres connection and migrations.
  *
- * One code path serves both environments. With no TURSO_DATABASE_URL set, this
- * opens a local file at data/moss.db exactly as before, so `npm run dev` needs no
- * credentials and no cloud account. In production it points at Turso instead.
+ * One SQL dialect, two backends chosen by environment:
  *
- * libSQL is asynchronous, unlike better-sqlite3 — every read and write here returns
- * a promise. That is the one real cost of being deployable.
+ *   - DATABASE_URL set  -> real Postgres (Vercel Postgres / Neon) via node-postgres
+ *   - nothing set       -> PGlite, Postgres compiled to WASM, persisted under data/pg
+ *
+ * PGlite is genuine Postgres, so local development runs exactly the SQL that
+ * production runs, with no server to install and no cloud account. It is loaded
+ * lazily so it never enters the production bundle.
+ *
+ * Note on identifiers: Postgres folds unquoted names to lowercase, so every
+ * camelCase column is quoted — "postedAt", not postedAt. Miss a quote and the
+ * column will not be found.
  */
 
-import { createClient, type Client, type InArgs } from "@libsql/client";
 import path from "node:path";
 
-/** Local file by default; Turso when the environment provides a URL. */
-export const DB_URL =
-  process.env.TURSO_DATABASE_URL ?? `file:${path.join(process.cwd(), "data", "moss.db")}`;
+/** Vercel's Postgres integrations expose one of these. */
+export const CONNECTION_STRING =
+  process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? null;
 
-export const IS_REMOTE = !DB_URL.startsWith("file:");
+export const IS_REMOTE = CONNECTION_STRING !== null;
 
-interface Migration {
-  id: number;
-  name: string;
-  statements: string[];
+/** Where PGlite keeps its files when running locally. */
+export const LOCAL_DATA_DIR = path.join(process.cwd(), "data", "pg");
+
+export interface QueryResult<T> {
+  rows: T[];
 }
 
-const MIGRATIONS: Migration[] = [
+/** The narrow surface both backends share. */
+export interface Db {
+  query<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<QueryResult<T>>;
+  /**
+   * Run several statements in one go. Parameterised queries use the extended
+   * protocol, which permits exactly one command — so schema work needs its own
+   * door. Never pass user input here.
+   */
+  exec(sql: string): Promise<void>;
+  /**
+   * Release the connection. Long-running servers never call this; one-shot scripts
+   * must, or a file-backed PGlite database is left locked for the next process.
+   */
+  close(): Promise<void>;
+}
+
+const MIGRATIONS: { id: number; name: string; sql: string }[] = [
   {
     id: 1,
     name: "initial schema",
-    statements: [
-      `CREATE TABLE posts (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        postedAt    TEXT    NOT NULL,
-        label       TEXT    NOT NULL,
+    sql: `
+      CREATE TABLE posts (
+        id          SERIAL PRIMARY KEY,
+        "postedAt"  TEXT NOT NULL,
+        label       TEXT NOT NULL,
         url         TEXT,
-        format      TEXT    NOT NULL CHECK (format IN ('reel', 'carousel', 'image')),
+        format      TEXT NOT NULL CHECK (format IN ('reel', 'carousel', 'image')),
         notes       TEXT,
-        createdAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      )`,
-      `CREATE INDEX idx_posts_postedAt ON posts (postedAt)`,
-      // Every number lives here. A post always has at least one snapshot; its
-      // "current" figures are the row with the newest capturedAt.
-      `CREATE TABLE snapshots (
-        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-        postId              INTEGER NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-        capturedAt          TEXT    NOT NULL,
-        views               INTEGER NOT NULL DEFAULT 0,
-        reach               INTEGER NOT NULL DEFAULT 0,
-        likes               INTEGER NOT NULL DEFAULT 0,
-        comments            INTEGER NOT NULL DEFAULT 0,
-        shares              INTEGER NOT NULL DEFAULT 0,
-        saves               INTEGER NOT NULL DEFAULT 0,
-        profileVisits       INTEGER NOT NULL DEFAULT 0,
-        followsFromPost     INTEGER NOT NULL DEFAULT 0,
-        followerCountAfter  INTEGER NOT NULL DEFAULT 0,
-        createdAt           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      )`,
-      `CREATE INDEX idx_snapshots_post ON snapshots (postId, capturedAt DESC)`,
-      // "key" is UNIQUE: this is what makes milestone detection idempotent.
-      `CREATE TABLE milestones (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        "key"       TEXT    NOT NULL UNIQUE,
-        type        TEXT    NOT NULL,
-        label       TEXT    NOT NULL,
-        achievedAt  TEXT    NOT NULL,
-        postId      INTEGER REFERENCES posts (id) ON DELETE SET NULL,
-        metric      TEXT,
-        value       REAL    NOT NULL,
-        createdAt   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      )`,
-      `CREATE INDEX idx_milestones_achievedAt ON milestones (achievedAt DESC)`,
-      `CREATE TABLE settings (
-        "key"  TEXT PRIMARY KEY,
-        value  TEXT NOT NULL
-      )`,
-    ],
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX idx_posts_posted_at ON posts ("postedAt");
+
+      -- Every number lives here. A post always has at least one snapshot; its
+      -- "current" figures are the row with the newest capturedAt.
+      CREATE TABLE snapshots (
+        id                   SERIAL PRIMARY KEY,
+        "postId"             INTEGER NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+        "capturedAt"         TEXT NOT NULL,
+        views                INTEGER NOT NULL DEFAULT 0,
+        reach                INTEGER NOT NULL DEFAULT 0,
+        likes                INTEGER NOT NULL DEFAULT 0,
+        comments             INTEGER NOT NULL DEFAULT 0,
+        shares               INTEGER NOT NULL DEFAULT 0,
+        saves                INTEGER NOT NULL DEFAULT 0,
+        "profileVisits"      INTEGER NOT NULL DEFAULT 0,
+        "followsFromPost"    INTEGER NOT NULL DEFAULT 0,
+        "followerCountAfter" INTEGER NOT NULL DEFAULT 0,
+        "createdAt"          TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX idx_snapshots_post ON snapshots ("postId", "capturedAt" DESC);
+
+      -- "key" is UNIQUE: this is what makes milestone detection idempotent.
+      CREATE TABLE milestones (
+        id           SERIAL PRIMARY KEY,
+        "key"        TEXT NOT NULL UNIQUE,
+        type         TEXT NOT NULL,
+        label        TEXT NOT NULL,
+        "achievedAt" TEXT NOT NULL,
+        "postId"     INTEGER REFERENCES posts (id) ON DELETE SET NULL,
+        metric       TEXT,
+        value        DOUBLE PRECISION NOT NULL,
+        "createdAt"  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX idx_milestones_achieved_at ON milestones ("achievedAt" DESC);
+
+      CREATE TABLE settings (
+        "key" TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `,
   },
 ];
 
-function makeClient(url = DB_URL): Client {
-  return createClient({
-    url,
-    authToken: process.env.TURSO_AUTH_TOKEN,
-  });
+async function createBackend(connectionString: string | null): Promise<Db> {
+  if (connectionString) {
+    const { Pool } = await import("pg");
+    const isLocalHost = /@(localhost|127\.0\.0\.1)/.test(connectionString);
+    const pool = new Pool({
+      connectionString,
+      // Hosted Postgres requires TLS. PGSSL_NO_VERIFY is an escape hatch for
+      // providers presenting a self-signed certificate.
+      ssl: isLocalHost
+        ? undefined
+        : { rejectUnauthorized: process.env.PGSSL_NO_VERIFY !== "1" },
+      // Serverless functions are short-lived; a big pool just exhausts the server.
+      max: 3,
+      idleTimeoutMillis: 10_000,
+    });
+    return {
+      query: async (sql, params) => {
+        const result = await pool.query(sql, params as never[]);
+        return { rows: result.rows };
+      },
+      // Without parameters node-postgres uses the simple protocol, which accepts
+      // multiple statements and wraps them in an implicit transaction.
+      exec: async (sql) => {
+        await pool.query(sql);
+      },
+      close: () => pool.end(),
+    };
+  }
+
+  const { PGlite } = await import("@electric-sql/pglite");
+  const pglite = new PGlite(LOCAL_DATA_DIR);
+  await pglite.waitReady;
+  return {
+    query: async (sql, params) => {
+      const result = await pglite.query(sql, params as never[]);
+      return { rows: result.rows as never[] };
+    },
+    exec: async (sql) => {
+      await pglite.exec(sql);
+    },
+    close: () => pglite.close(),
+  };
 }
 
-/**
- * The shared client, plus a one-time migration promise.
- *
- * Both are cached on globalThis so Next's dev-mode module reloading does not open a
- * new connection or re-run migrations on every edit. Callers await `getDb()`, which
- * resolves only once the schema is in place.
- */
 interface Cache {
-  client?: Client;
-  migrated?: Promise<Client>;
+  db?: Promise<Db>;
 }
 
 function cache(): Cache {
@@ -103,72 +160,70 @@ function cache(): Cache {
   return g.__moss;
 }
 
-export function getClient(): Client {
+/**
+ * The shared connection, guaranteed migrated. Cached on globalThis so Next's
+ * dev-mode module reloading does not reconnect or re-migrate on every edit.
+ */
+export function getDb(): Promise<Db> {
   const c = cache();
-  c.client ??= makeClient();
-  return c.client;
-}
-
-/** The client, guaranteed migrated. Await this before any query. */
-export function getDb(): Promise<Client> {
-  const c = cache();
-  c.migrated ??= (async () => {
-    const client = getClient();
-    await migrate(client);
-    return client;
+  c.db ??= (async () => {
+    const db = await createBackend(CONNECTION_STRING);
+    await migrate(db);
+    return db;
   })();
-  return c.migrated;
+  return c.db;
 }
 
-export async function migrate(db: Client): Promise<void> {
-  await db.execute(`CREATE TABLE IF NOT EXISTS _migrations (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL,
-    appliedAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+export async function migrate(db: Db): Promise<void> {
+  await db.query(`CREATE TABLE IF NOT EXISTS _migrations (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
 
-  const existing = await db.execute("SELECT id FROM _migrations");
-  const applied = new Set(existing.rows.map((r) => Number(r.id)));
+  const { rows } = await db.query<{ id: number }>("SELECT id FROM _migrations");
+  const applied = new Set(rows.map((r) => Number(r.id)));
 
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.id)) continue;
-    // batch() is transactional: either the whole migration lands or none of it does.
-    await db.batch(
-      [
-        ...migration.statements,
-        {
-          sql: "INSERT INTO _migrations (id, name) VALUES (?, ?)",
-          args: [migration.id, migration.name],
-        },
-      ],
-      "write",
-    );
+    // Wrapped in a transaction: the whole migration lands or none of it does.
+    await db.exec(`
+      BEGIN;
+      ${migration.sql}
+      INSERT INTO _migrations (id, name) VALUES (${migration.id}, '${migration.name.replace(/'/g, "''")}');
+      COMMIT;
+    `);
   }
 }
 
-/** Open a connection at an explicit URL — used by the seed and reset scripts. */
-export async function openDb(url: string = DB_URL): Promise<Client> {
-  const db = makeClient(url);
+/** Open a connection explicitly — used by the seed and reset scripts and by tests. */
+export async function openDb(connectionString: string | null = CONNECTION_STRING): Promise<Db> {
+  const db = await createBackend(connectionString);
   await migrate(db);
   return db;
 }
 
 /** Delete every row, leaving the schema in place. */
-export async function wipe(db: Client): Promise<void> {
-  await db.batch(
-    [
-      "DELETE FROM milestones",
-      "DELETE FROM snapshots",
-      "DELETE FROM posts",
-      "DELETE FROM sqlite_sequence WHERE name IN ('posts','snapshots','milestones')",
-    ],
-    "write",
-  );
+export async function wipe(db: Db): Promise<void> {
+  // RESTART IDENTITY resets the id sequences; CASCADE clears dependent rows.
+  await db.query("TRUNCATE milestones, snapshots, posts RESTART IDENTITY CASCADE");
 }
 
-/** libSQL returns INTEGER columns as number or bigint depending on size. */
+/** Postgres returns BIGINT and NUMERIC as strings; counts come back as numbers. */
 export function int(value: unknown): number {
-  return typeof value === "bigint" ? Number(value) : Number(value ?? 0);
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
-export type { Client, InArgs };
+/** A human-readable description of where the data lives, for the Settings screen. */
+export function describeDatabase(): string {
+  if (!CONNECTION_STRING) return LOCAL_DATA_DIR;
+  try {
+    const url = new URL(CONNECTION_STRING);
+    return `${url.hostname}${url.pathname}`;
+  } catch {
+    return "hosted Postgres";
+  }
+}
