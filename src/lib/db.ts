@@ -278,12 +278,24 @@ function cache(): Cache {
  */
 export function getDb(): Promise<Db> {
   const c = cache();
-  c.db ??= (async () => {
+  if (c.db) return c.db;
+
+  const pending = (async () => {
     const db = await createBackend(CONNECTION_STRING);
     await migrate(db);
     return db;
   })();
-  return c.db;
+
+  // Cache the attempt, but do not let a failed one stick. A serverless instance is
+  // reused across requests, so caching a rejected promise would leave that instance
+  // permanently broken over a transient blip — the next request must be free to try
+  // again rather than replay the old failure.
+  pending.catch(() => {
+    if (cache().db === pending) cache().db = undefined;
+  });
+
+  c.db = pending;
+  return pending;
 }
 
 export async function migrate(db: Db): Promise<void> {
