@@ -170,14 +170,9 @@ async function createBackend(connectionString: string | null): Promise<Db> {
 
   if (connectionString) {
     const { Pool } = await import("pg");
-    const isLocalHost = /@(localhost|127\.0\.0\.1)/.test(connectionString);
     const pool = new Pool({
       connectionString,
-      // Hosted Postgres requires TLS. PGSSL_NO_VERIFY is an escape hatch for
-      // providers presenting a self-signed certificate.
-      ssl: isLocalHost
-        ? undefined
-        : { rejectUnauthorized: process.env.PGSSL_NO_VERIFY !== "1" },
+      ssl: sslConfig(connectionString),
       // Serverless functions are short-lived; a big pool just exhausts the server.
       max: 3,
       idleTimeoutMillis: 10_000,
@@ -209,6 +204,36 @@ async function createBackend(connectionString: string | null): Promise<Db> {
     },
     close: () => pglite.close(),
   };
+}
+
+/**
+ * TLS settings, following libpq's sslmode semantics rather than inventing our own.
+ *
+ * The distinction matters: `require` means "encrypt the connection", NOT "verify
+ * the server's identity" — only `verify-ca` and `verify-full` ask for verification.
+ * Managed providers (Supabase's pooler among them) routinely present certificates
+ * signed by their own CA, so verifying by default rejects a perfectly normal setup
+ * with "self-signed certificate in certificate chain".
+ *
+ * Traffic is still encrypted in every mode except `disable`. Set
+ * sslmode=verify-full in the connection string to demand a publicly trusted chain.
+ */
+export function sslConfig(connectionString: string): false | { rejectUnauthorized: boolean } | undefined {
+  const mode = readSslMode(connectionString);
+
+  if (mode === "disable") return false;
+  if (/@(localhost|127\.0\.0\.1)/.test(connectionString) && mode === null) return undefined;
+  if (process.env.PGSSL_NO_VERIFY === "1") return { rejectUnauthorized: false };
+
+  return { rejectUnauthorized: mode === "verify-ca" || mode === "verify-full" };
+}
+
+function readSslMode(connectionString: string): string | null {
+  try {
+    return new URL(connectionString).searchParams.get("sslmode");
+  } catch {
+    return null;
+  }
 }
 
 interface Cache {
